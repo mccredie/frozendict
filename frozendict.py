@@ -1,30 +1,52 @@
 #!/usr/bin/env python3
 
+import typing
 from enum import Enum
-from collections import namedtuple, Mapping
+from abc import abstractmethod
+from dataclasses import dataclass, replace
+
+from typing_extensions import Protocol
+
+Key = typing.TypeVar("Key", bound="Ordered")
+
+class Ordered(Protocol):
+    @abstractmethod
+    def __eq__(self, other: typing.Any) -> bool:
+        pass
+
+    @abstractmethod
+    def __lt__(self: Key, other: Key) -> bool:
+        pass
+
 
 class RBColor(Enum):
     black = False
     red = True
 
-class RBNode(namedtuple("RBNode", "key value left right color")):
-    __slots__ = ()
-    def __new__(cls, key, value, left=None, right=None, color=RBColor.black):
-        return super(RBNode, cls).__new__(cls, key, value, left, right, color)
+
+@dataclass(frozen=True)
+class RBNode(typing.Generic[Key]):
+    "key value left right color"
+    key: Key
+    value: typing.Any
+    right: 'RBNode[Key]' = None
+    left: 'RBNode[Key]' = None
+    color: RBColor = RBColor.black
 
     def rotate_left(self):
-        new = self._replace(right=self.right.left, color=RBColor.red)
-        return self.right._replace(left=new, color=self.color)
+        new = replace(self, right=self.right.left, color=RBColor.red)
+        return replace(self.right, left=new, color=self.color)
 
     def rotate_right(self):
-        new = self._replace(color=RBColor.red, left=self.left.right)
-        return self.left._replace(right=new, color=self.color)
+        new = replace(self, color=RBColor.red, left=self.left.right)
+        return replace(self.left, right=new, color=self.color)
 
     def flip_colors(self):
-        return self._replace(
+        return replace(
+            self,
             color=not self.color,
-            left=self.left._replace(color=not self.left.color),
-            right=self.right._replace(color=not self.right.color))
+            left=replace(self.left, color=not self.left.color),
+            right=replace(self.right, color=not self.right.color))
 
     def insert(self, key, value):
         return insert(self, key, value)
@@ -55,11 +77,11 @@ def insert(h, key, value):
         h = h.flip_colors()
 
     if key == h.key:
-        h = h._replace(value=value)
+        h = replace(h, value=value)
     elif key < h.key:
-        h = h._replace(left=insert(h.left, key, value))
+        h = replace(h, left=insert(h.left, key, value))
     else:
-        h = h._replace(right=insert(h.right, key, value))
+        h = replace(h, right=insert(h.right, key, value))
 
     if is_red(h.right) and not is_red(h.left):
         h = h.rotate_left()
@@ -89,12 +111,14 @@ def node_to_str(node, prefix=""):
         node_to_str(node.right, prefix + "  "),
     ])
 
-class FrozenDict(Mapping, tuple):
+@dataclass(frozen=True)
+class FrozenDict(typing.Mapping[Key, typing.Any]):
     """ A frozen dictionary implementation that is based on an immutable left
     leaning red black tree implementation.
     """
-    __slots__ = ()
-    def __new__(cls, *args, **kwds):
+    root: RBNode[Key]
+
+    def __init__(self, *args, **kwargs):
         if len(args) > 1:
             raise TypeError('update expected at most 1 arguments, got %d' %
                             len(args))
@@ -102,8 +126,8 @@ class FrozenDict(Mapping, tuple):
         if args:
             other = args[0]
             if isinstance(other, FrozenDict):
-                root = other._root
-            elif isinstance(other, Mapping):
+                root = other.root
+            elif isinstance(other, typing.Mapping):
                 for key in other:
                     root = insert(root, key, other[key])
             elif hasattr(other, "keys"):
@@ -112,25 +136,21 @@ class FrozenDict(Mapping, tuple):
             else:
                 for key, value in other:
                     root = insert(root, key, value)
-        for key, value in kwds.items():
+        for key, value in kwargs.items():
             root = insert(root, key, value)
+        object.__setattr__(self, 'root', root)
 
-        return tuple.__new__(cls, (root,))
 
-    @property
-    def _root(self):
-        return tuple.__getitem__(self, 0)
+    def __getitem__(self, key: Key):
+        return self.root.search(key)
 
-    def __getitem__(self, key):
-        return self._root.search(key)
+    def __iter__(self) -> typing.Iterable[Key]:
+        return iter_keys(self.root)
 
-    def __iter__(self):
-        return iter_keys(self._root)
+    def __len__(self) -> int:
+        return node_len(self.root)
 
-    def __len__(self):
-        return node_len(self._root)
-
-    def __repr__(self):
+    def __repr__(self) -> str:
         return ", ".join(
                 "{0!r}: {1!r}".format(k, v) for k, v in self.items()).join((
                     "FrozenDict({", "})"))
